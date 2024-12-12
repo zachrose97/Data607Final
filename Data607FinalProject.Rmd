@@ -1,0 +1,819 @@
+
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+
+Since it’s steady legalization throughout the United States, sports betting as an industry has grown expeditiously. With more and more Americans participating every day, I wanted to take a closer look at the numbers and odds people are betting their money so freely on. Due to their convoluted nature, looking through betting odds can be incredibly difficult to fully grasp when attempting to decipher one’s actual chance of winning a bet. In this project, I aim to gather more information into how sportsbooks create their odds, and any inconsistencies they may have.
+
+```{r}
+# Storing API to remove public visibility
+setwd("C:\\Users\\poiso\\OneDrive\\Documents\\Data607FinalProject")
+source("config.R")
+```
+
+
+```{r}
+library(tidyverse)
+
+# Path to nfl outcome dataset
+file_path <- "https://raw.githubusercontent.com/zachrose97/Data607Final/refs/heads/main/sportsref_download%20(6).csv"
+
+# Load the dataset
+nfl_data <- read_csv(file_path)
+
+glimpse(nfl_data)
+
+```
+
+```{r}
+# Column name adjustment
+nfl_data <- nfl_data %>%
+  rename(
+    week = Week,
+    day = Day,
+    game_date = Date,
+    game_time = Time,
+    winner = `Winner/tie`,
+    location = `...6`,
+    loser = `Loser/tie`,
+    winner_points = PtsW,
+    loser_points = PtsL,
+    winner_yards = YdsW,
+    winner_turnovers = TOW,
+    loser_yards = YdsL,
+    loser_turnovers = TOL
+  )
+```
+
+```{r}
+# Data clean up
+nfl_data <- nfl_data %>%
+  filter(!is.na(game_date))
+sum(is.na(nfl_data$game_date))
+```
+
+```{r}
+library(rvest)
+
+# Define the URL for Week 1 of web scraping data
+url <- "https://www.sportsoddshistory.com/nfl-game-season/?y=2023&week=1"
+
+# Read the webpage
+webpage <- read_html(url)
+
+# Extract all tables on the page
+all_tables <- webpage %>% html_nodes("table")
+
+# Print the total number of tables
+length(all_tables)
+
+# Inspects the first few tables
+for (i in seq_along(all_tables)) {
+  cat("\n--- Table", i, "---\n")
+  print(all_tables[[i]] %>% html_table(fill = TRUE) %>% head())
+}
+```
+
+```{r}
+# Loop through tables 6 to 19 and print their content
+for (i in 6:19) {
+  cat("\n--- Table", i, "---\n")
+  table <- all_tables[[i]] %>% html_table(fill = TRUE)
+  print(head(table))  # Print the first few rows of the table
+}
+
+```
+```{r}
+
+# Check if table contains the correct columns
+game_table <- all_tables[[6]] %>% 
+  html_table(fill = TRUE) %>%
+  as_tibble()
+
+
+```
+
+```{r}
+# Cleans column titles scraped data table
+game_table_cleaned <- game_table %>%
+  select(
+    Day = X1,             
+    Date = X2,              
+    Time = X3,             
+    Home_Away = X4,       
+    Favorite = X5,          
+    Score = X6,             
+    Spread = X7,          
+    Underdog_Home_Away = X8, 
+    Underdog = X9,         
+    Over_Under = X10     
+  )
+```
+
+```{r}
+ # Remove rows where key columns contain header titles
+game_table_cleaned <- game_table_cleaned %>%
+  filter(
+    !(Day == "Day" | Date == "Date" | Favorite == "Favorite") 
+  )
+
+```
+
+```{r}
+# Retain only columns with non-NA values
+game_table_cleaned <- game_table_cleaned %>%
+  select(where(~ any(!is.na(.))))  
+```
+
+```{r}
+# Cleans Spread column
+game_table_cleaned <- game_table_cleaned %>%
+  filter(grepl("^[WL] -?\\d+(\\.\\d+)?$", Spread))
+```
+
+```{r} 
+ # Removes W or L and converts to numeric
+game_table_cleaned <- game_table_cleaned %>%
+  mutate(
+    Spread = as.numeric(gsub("^[WL] ", "", Spread))  # Remove `W ` or `L ` and convert to numeric
+  )
+```
+
+
+```{r}
+game_table_cleaned <- game_table_cleaned %>%
+  rename(
+    Favorite_Location = Home_Away,
+    Underdog_Location = Underdog_Home_Away
+  )
+
+```
+
+```{r}
+game_table_cleaned <- game_table_cleaned %>%
+  mutate(
+    Favorite_Location = ifelse(Favorite_Location == "@", "away", "home"), 
+    Underdog_Location = ifelse(Underdog_Location == "@", "away", "home")  
+  )
+```
+
+
+```{r}
+game_table_cleaned <- game_table_cleaned %>%
+  mutate(Date = lubridate::mdy(Date))
+```
+
+```{r}
+game_table_cleaned <- game_table_cleaned %>%
+  separate(Score, into = c("Result", "Scores"), sep = " ") %>%
+  separate(Scores, into = c("Favorite_Score", "Underdog_Score"), sep = "-") %>%
+  mutate(
+    Favorite_Score = as.numeric(Favorite_Score),
+    Underdog_Score = as.numeric(Underdog_Score)
+  )
+```
+```{r}
+game_table_cleaned <- game_table_cleaned %>%
+  mutate(
+    Over_Under = as.numeric(gsub("[UO] ", "", Over_Under))
+  )
+```
+
+```{r}
+win_rate <- game_table_cleaned %>%
+  group_by(Favorite_Location) %>%
+  summarise(Favorite_Win_Rate = mean(Result == "W"), .groups = "drop")
+
+print(win_rate)
+```
+This code calculates the win rate of teams designated as the favorite based on their location, whether playing at home or away. It groups the cleaned game data by Favorite_Location and calculates the mean win rate (Result == "W") for each group. The results show that favorites playing away have a slightly higher win rate (68.52%) compared to those playing at home (64.71%). As expected, this suggests that being labeled as the favorite may be a greater advantage overall then homefield advantage. 
+
+
+```{r}
+library(ggplot2)
+
+# Spread distribution
+ggplot(game_table_cleaned, aes(x = Spread)) +
+  geom_histogram(binwidth = 1, fill = "blue", color = "black") +
+  labs(title = "Distribution of Spread Values", x = "Spread", y = "Frequency")
+```
+
+This code creates a histogram to visualize the distribution of spread values from the cleaned game data. The x-axis represents the spread, which is the predicted margin of victory for the favored team, while the y-axis shows the frequency of games within each spread range. The histogram reveals that most spreads are concentrated around -5, indicating that favorites were commonly predicted to win by around 0 to 5 points. The distribution also shows fewer extreme spreads, such as values below -10 or near 0, suggesting those predictions are less common. This visualization helps identify patterns in how games were expected to play out.
+
+```{r}
+spread_analysis <- game_table_cleaned %>%
+  summarise(
+    Avg_Spread = mean(Spread, na.rm = TRUE),
+    Home_Spread = mean(Spread[Favorite_Location == "home"], na.rm = TRUE),
+    Away_Spread = mean(Spread[Favorite_Location == "away"], na.rm = TRUE)
+  )
+print(spread_analysis)
+
+```
+
+This code calculates the average spread across all games, as well as separately for games where the favorite team played at home versus away. The overall average spread is approximately -4.95, indicating that favored teams were generally expected to win by nearly 5 points. When the favorite team played at home, the average spread was slightly smaller (-4.24), compared to games where the favorite played away (-5.39). Unexpectedly this suggests that home teams were typically given a smaller margin of victory compared to away teams.
+
+```{r}
+over_under_analysis <- game_table_cleaned %>%
+  summarise(
+    Over_Count = sum(Result == "W" & Over_Under > Favorite_Score + Underdog_Score),
+    Under_Count = sum(Result == "L" & Over_Under < Favorite_Score + Underdog_Score)
+  )
+print(over_under_analysis)
+
+```
+This code calculates the number of games where the total points scored exceeded or fell short of the projected "over/under" value. The results show that 97 games went "over," meaning the actual combined score was greater than the predicted total, while 41 games went "under," where the total score was less than the prediction. Over two thirds of the games ended over the projected total, a significant portion for a form of betting odds that is intended to be split 50/50 for each side. 
+
+
+```{r}
+game_table_cleaned <- game_table_cleaned %>%
+  mutate(Result = ifelse(Result == "W", 1, 0))
+
+glm_model <- glm(Result ~ Spread + Favorite_Location + Over_Under,
+                 data = game_table_cleaned, family = binomial)
+summary(glm_model)
+
+
+```
+
+This code uses a logistic regression model to find the likelihood of a team winning based on the spread, the team's location, and the over/under value. For the spread, it results in a negative coefficient of -.07542, which suggests that as the spread becomes more favorable for the expected winner, the probability of a win decreases slightly, however this result is not statistically significant due to a p value of .0822. Surprisingly, according to this model location has a negligible effect on outcomes of games, this can be seen through the p value of .7427. For the Over/Under, the coefficient of .06429 and p value of .0335 indicates that games with higher over/under values are slightly more likely to result in wins for the favorite.  
+
+```{r}
+lm_model <- lm(Spread ~ Favorite_Score + Underdog_Score + Favorite_Location,
+               data = game_table_cleaned)
+
+summary(lm_model)
+```
+This code uses a linear regression model to utilize the spread as a function of the favorite team's score, the underdog team's score, and the favorite team's location. The baseline spread is -3.45, indicating that on average the favorite team is projected to win by 3.45 points when all other variables are at their baseline levels. For Favorite_Score, The coefficient of -.08512 indicates  that for every additional point scored by the favorite team, the spread decreases slightly. The coefficient for the Underdog_score (.5195) is not statistically significant and implicates that the underdog score has little or no effect at all on the spread. For Favorite_Locationhome, the coefficient of .86449 indicates that when the favorite team is at home, the spread increases slightly, implying that their is a home-field advantage in the eyes of the odds makers. 
+
+```{r}
+exp(coef(glm_model))
+library(broom)
+augment(glm_model)
+library(ggplot2)
+ggplot(game_table_cleaned, aes(x = Spread, y = fitted(glm_model))) +
+  geom_point() +
+  geom_smooth(method = "glm", method.args = list(family = "binomial"), se = TRUE)
+```
+
+
+This plot visualizes the relationship between the spread and the predicted probability of the favorite team winning, as calculated by the logistic regression model "glm_model". This plot shows that as the spread approaches 0, the predicted probability of the favorite team winning decreases. This aligns with what was seen earlier in regards to a smaller spread reflecting a less dominant favorite. 
+
+```{r}
+library(httr)
+library(dplyr)
+library(jsonlite)
+library(purrr)
+
+# Define API key and base URL
+api_key <- api_key
+events_url <- "https://api.the-odds-api.com/v4/historical/sports/americanfootball_nfl/events"
+
+# Specify the date for historical events
+query_params <- list(
+  apiKey = api_key,
+  regions = "us",
+  date = "2023-09-07T00:00:00Z"  # Replace with your desired date
+)
+
+# Send GET request
+response <- GET(url = events_url, query = query_params)
+
+# Check for successful response
+if (status_code(response) == 200) {
+  # Parse the raw response
+  response_data <- content(response, as = "parsed", simplifyVector = TRUE)
+  
+  # Validate the structure of the response
+  if (!is.null(response_data$data) && is.list(response_data$data)) {
+    events_list <- response_data$data  # Assign valid data to events_list
+    
+    if (length(events_list) > 0) {
+      # Extract relevant fields with map functions to handle missing keys safely
+      events <- data.frame(
+        event_id = map_chr(events_list, "id", .default = NA),
+        sport_key = map_chr(events_list, "sport_key", .default = NA),
+        sport_title = map_chr(events_list, "sport_title", .default = NA),
+        commence_time = map_chr(events_list, "commence_time", .default = NA),
+        home_team = map_chr(events_list, "home_team", .default = NA),
+        away_team = map_chr(events_list, "away_team", .default = NA)
+      )
+      
+      # Print the first few rows of the extracted data
+      print(head(events))
+    } else {
+      print("The events list is empty.")
+    }
+  } else {
+    print("No valid events found in the response.")
+  }
+} else {
+  print(paste("Error fetching events:", status_code(response)))
+}
+
+
+```
+
+
+
+
+```{r}
+library(httr)
+library(jsonlite)
+library(dplyr)
+
+# Subset the first 93 rows from events_list
+limited_events <- events_list[1:93, ]
+
+# Initialize an empty list to store the props data
+player_props_list <- list()
+
+for (i in seq_len(nrow(limited_events))) {
+  event_id <- limited_events$id[i]
+  
+  # Construct the API endpoint
+  url <- paste0("https://api.the-odds-api.com/v4/historical/sports/americanfootball_nfl/events/",
+                event_id,
+                "/odds")
+  
+  # Make the GET request
+  response <- GET(
+    url = url,
+    query = list(
+      apiKey = api_key,
+      regions = "us",
+      markets = "player_reception_yds",  # Market for player props
+      date = limited_events$commence_time[i]
+    )
+  )
+  
+  # Check for successful response
+  if (status_code(response) == 200) {
+    content_data <- content(response, as = "parsed", simplifyVector = TRUE)
+    
+    # Extract player props if available
+    if (!is.null(content_data$data) && !is.null(content_data$data$bookmakers)) {
+      for (bookmaker in content_data$data$bookmakers) {
+        # Debug: Print the structure of bookmaker if an issue arises
+        if (!is.list(bookmaker)) {
+          message("Invalid bookmaker format:")
+          print(bookmaker)
+          next
+        }
+        
+        # Ensure markets exist and are a list
+        if (!is.null(bookmaker$markets) && is.list(bookmaker$markets)) {
+          for (market in bookmaker$markets) {
+            if (!is.null(market$key) && market$key == "player_reception_yds") {
+              # Parse player props data
+              market_data <- map_dfr(market$outcomes, ~ {
+                tibble(
+                  player = .x$description,
+                  over_under = .x$name,
+                  point = .x$point,
+                  price = .x$price,
+                  event_id = event_id,
+                  home_team = limited_events$home_team[i],
+                  away_team = limited_events$away_team[i],
+                  commence_time = limited_events$commence_time[i],
+                  bookmaker = bookmaker$title
+                )
+              })
+              
+              # Append to the results list
+              player_props_list <- append(player_props_list, list(market_data))
+            }
+          }
+        } else {
+          message("Skipping invalid or empty markets for bookmaker: ", bookmaker$title)
+        }
+      }
+    }
+  } else {
+    message("Failed to fetch data for event ID: ", event_id)
+  }
+}
+
+
+
+# Combine all collected props into a single dataframe
+player_props_data <- bind_rows(player_props_list)
+
+# Preview the data
+print(head(player_props_data))
+
+
+```
+```{r}
+# Initialize a list to store the parsed data
+player_props_list <- list()
+# Loop through events and extract player reception yards
+for (i in seq_len(nrow(limited_events))) {
+  event_id <- limited_events$id[i]
+  # Construct the API endpoint for the specific event
+  url <- paste0("https://api.the-odds-api.com/v4/historical/sports/americanfootball_nfl/events/",
+                event_id,
+                "/odds")
+  # Make the API request
+  response <- GET(
+    url = url,
+    query = list(
+      apiKey = api_key,
+      regions = "us",
+      markets = "player_reception_yds",  # Specify the market for player props
+      date = limited_events$commence_time[i]
+    )
+  )
+  # Check if the request was successful
+  if (status_code(response) != 200) {
+    message("Failed to fetch data for event ID: ", event_id)
+    next
+  }
+  # Parse the response content
+  content_data <- content(response, as = "parsed", simplifyVector = FALSE)
+  # Check if `data` and `bookmakers` fields exist
+  if (!is.null(content_data$data) && !is.null(content_data$data$bookmakers)) {
+    for (bookmaker in content_data$data$bookmakers) {
+      if (is.list(bookmaker$markets)) {  # Ensure markets is a list
+        for (market in bookmaker$markets) {
+          if (market$key == "player_reception_yds") {
+            # Extract outcomes
+            outcomes <- market$outcomes[[1]]
+            if (!is.null(outcomes)) {
+              # Create a data frame for this market
+              market_data <- tibble(
+                player = outcomes$description,
+                bet_type = outcomes$name,
+                odds = outcomes$price,
+                point = outcomes$point,
+                bookmaker = bookmaker$key,
+                event_id = event_id,
+                home_team = content_data$data$home_team,
+                away_team = content_data$data$away_team,
+                commence_time = content_data$data$commence_time
+              )
+              # Append to the list
+              player_props_list[[length(player_props_list) + 1]] <- market_data
+            }
+          }
+        }
+      }
+    }
+  } else {
+    message("No bookmakers or markets found for event ID: ", event_id)
+  }
+}
+
+# Combine all parsed data into a single data frame
+player_props_data <- bind_rows(player_props_list)
+
+
+# Preview the first few rows of the dataset
+print(head(player_props_data))
+
+```
+
+The two chunks of above use several R packages to utilize an API from "The Odds API" to fetch historical NFL betting odds. They parse through the data and create a table that displays NFL player prop odds from games that occured in the 2023 season. 
+
+```{r}
+# Cleans the player prop data that was retrieved through the API
+cleaned_player_props_data <- player_props_data %>%
+  group_by(event_id, player) %>%
+  summarise(
+    home_team = first(home_team),          
+    away_team = first(away_team),          
+    commence_time = first(commence_time), 
+    avg_odds = round(mean(odds, na.rm = TRUE), 2),  
+    avg_point = round(mean(point, na.rm = TRUE), 2),
+    .groups = "drop"                      
+  )
+```
+
+
+```{r}
+# Game outcome data for player props
+library(readr)
+all_receptions <- read.csv("https://raw.githubusercontent.com/zachrose97/Data607Final/refs/heads/main/All_Receptions.csv")
+
+colnames(all_receptions)
+head(all_receptions)
+```
+
+This code pulls data from a CSV that contains actual player statistic outcomes from the 2023 NFL season. 
+
+```{r}
+# Data column cleaning to identify if player belongs to home or away team. 
+all_receptions <- all_receptions %>%
+  mutate(
+    home_team = ifelse(X == "@", Opp, Team),
+    away_team = ifelse(X == "@", Team, Opp)
+  )
+```
+
+```{r}
+# Data mapping
+team_mapping <- data.frame(
+  full_name = c(
+    "Arizona Cardinals", "Atlanta Falcons", "Baltimore Ravens", "Buffalo Bills", 
+    "Carolina Panthers", "Chicago Bears", "Cincinnati Bengals", "Cleveland Browns", 
+    "Dallas Cowboys", "Denver Broncos", "Detroit Lions", "Green Bay Packers", 
+    "Houston Texans", "Indianapolis Colts", "Jacksonville Jaguars", "Kansas City Chiefs", 
+    "Las Vegas Raiders", "Los Angeles Chargers", "Los Angeles Rams", "Miami Dolphins", 
+    "Minnesota Vikings", "New England Patriots", "New Orleans Saints", "New York Giants", 
+    "New York Jets", "Philadelphia Eagles", "Pittsburgh Steelers", "San Francisco 49ers", 
+    "Seattle Seahawks", "Tampa Bay Buccaneers", "Tennessee Titans", "Washington Commanders"
+  ),
+  acronym = c(
+    "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE", "DAL", "DEN", 
+    "DET", "GB", "HOU", "IND", "JAX", "KC", "LV", "LAC", "LAR", "MIA", 
+    "MIN", "NE", "NO", "NYG", "NYJ", "PHI", "PIT", "SF", "SEA", "TB", 
+    "TEN", "WAS"
+  )
+)
+```
+
+This code attaches the team acronyms from the All_Receptions and turns them into the full team names
+
+```{r}
+cleaned_player_props_data <- cleaned_player_props_data %>%
+  left_join(team_mapping, by = c("home_team" = "full_name")) %>%
+  rename(home_team_acronym = acronym) %>%
+  left_join(team_mapping, by = c("away_team" = "full_name")) %>%
+  rename(away_team_acronym = acronym)
+```
+
+This code matches the mapped team names code with the dataset that will be mainly used for analysis, "cleaned_player_props_data".
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+# Defines the start date of the NFL season
+nfl_start_date <- as.Date("2023-09-08")
+
+# Adds the week column to cleaned_player_props_data
+cleaned_player_props_data <- cleaned_player_props_data %>%
+  mutate(
+    commence_date = as.Date(commence_time),  # Ensure commence_time is in Date format
+    week = ceiling(as.numeric(commence_date - nfl_start_date + 1) / 7)  # Calculate week
+  )
+
+# Views the updated dataset
+head(cleaned_player_props_data)
+
+```
+
+This code correctly aligns the dates in the dataset using one table's "commence_time" column and the others "date" column
+
+```{r}
+# Data cleaning
+all_receptions <- all_receptions %>%
+  rename(player = Player)
+```
+
+This code cleans the palyer column in all_reception to be all lowercase
+
+```{r}
+# Data cleaning
+all_receptions <- all_receptions %>%
+  filter(!is.na(Week))
+
+all_receptions <- all_receptions %>%
+  rename(week = Week)
+```
+
+This code removes empty values from the week column in all receptions, and then standardizes it to be all lower case
+
+```{r}
+# Merges two datasets
+merged_data <- cleaned_player_props_data %>%
+  inner_join(all_receptions, by = c("player", "week"))
+```
+
+This code merges cleaned_player_props_data and all_receptions by matching player and week columns now that they have both been standardized
+
+```{r}
+merged_data <- merged_data %>%
+  mutate(
+    result = case_when(
+      Yds > avg_point ~ "Over",
+      Yds < avg_point ~ "Under",
+      TRUE ~ "Push"  # For cases where Yds == avg_point
+    )
+  )
+
+# Summarize the results
+summary_results <- merged_data %>%
+  group_by(result) %>%
+  summarise(
+    count = n(),
+    percentage = (n() / nrow(merged_data)) * 100
+  )
+
+# View the summary
+print(summary_results)
+```
+
+This code computes how many of the players from the merged_data dataset went over or under their projected yardage by the sportsbooks.
+
+```{r}
+library(ggplot2)
+ggplot(summary_results, aes(x = "", y = percentage, fill = result)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  labs(
+    title = "Player Props Results Distribution",
+    fill = "Result"
+  ) +
+  theme_void() +
+  scale_fill_manual(values = c("Over" = "blue", "Under" = "red"))
+```
+A plot showing the distribution in players going over or under expected yardage.
+
+```{r}
+# Data cleaning
+merged_data <- merged_data %>%
+  select(
+    -home_team.y,  # Remove the home team acronym
+    -away_team.y   # Remove the away team acronym
+  ) %>%
+  rename(
+    home_team = home_team.x,  # Rename home_team.x to home_team
+    away_team = away_team.x   # Rename away_team.x to away_team
+  )
+```
+
+This code removes team acronyms from the merged data set, and renames the home and away team names for easier readability. 
+
+```{r}
+# Adds a column to classify close spread games
+game_table_cleaned <- game_table_cleaned %>%
+  mutate(
+    close_spread = ifelse(abs(Spread) <= 3, "Close", "Not Close")
+  )
+
+# View the distribution of close vs. not close games
+table(game_table_cleaned$close_spread)
+```
+
+```{r}
+player_performance_by_team <- merged_data %>%
+  group_by(home_team, away_team) %>%
+  summarise(
+    total_players = n(),
+    over_count = sum(result == "Over"),
+    under_count = sum(result == "Under"),
+    over_percentage = (over_count / total_players) * 100,
+    under_percentage = (under_count / total_players) * 100,
+    .groups = "drop"
+  )
+
+# View the summary
+head(player_performance_by_team)
+```
+
+This code breaks down how many players on each team during each game went over or under their expected yardage. 
+
+```{r}
+game_table_cleaned <- game_table_cleaned %>%
+  distinct(Favorite, Underdog, .keep_all = TRUE)
+```
+
+```{r}
+# Add spread category to game_table_cleaned
+game_table_cleaned <- game_table_cleaned %>%
+  mutate(spread_category = ifelse(abs(Spread) <= 3, "Close", "Not Close"))
+
+# Perform the join using flexible logic
+player_performance_by_spread <- merged_data %>%
+  left_join(
+    game_table_cleaned %>%
+      select(Favorite, Underdog, spread_category, Favorite_Location, Underdog_Location),
+    by = c("home_team" = "Favorite", "away_team" = "Underdog")
+  ) %>%
+  mutate(team_role = ifelse(!is.na(Favorite_Location), "favorite", "underdog")) %>%
+  bind_rows(
+    merged_data %>%
+      left_join(
+        game_table_cleaned %>%
+          select(Favorite, Underdog, spread_category, Favorite_Location, Underdog_Location),
+        by = c("home_team" = "Underdog", "away_team" = "Favorite")
+      ) %>%
+      mutate(team_role = ifelse(!is.na(Underdog_Location), "underdog", "favorite"))
+  )
+
+```
+
+```{r}
+player_performance_summary <- player_performance_by_spread %>%
+  group_by(spread_category) %>%
+  summarise(
+    avg_over_percentage = mean(result == "Over", na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# View the results
+print(player_performance_summary)
+```
+
+This code first adds a spread column to the player performance dataset, it then displays the percentage of players that went over their expected yardage on close spreads, and players that went over on not close spreads. 
+
+```{r}
+ggplot(player_performance_summary, aes(x = spread_category, y = avg_over_percentage, fill = spread_category)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  labs(
+    title = "Player Over-Performance by Spread Category",
+    x = "Spread Category",
+    y = "Average Over Percentage"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("Close" = "green", "Not Close" = "orange"))
+```
+
+This code creates a visualization of the distribution in these two categories. 
+
+```{r}
+team_performance <- merged_data %>%
+  left_join(game_table_cleaned, by = c("home_team" = "Favorite", "away_team" = "Underdog")) %>%
+  group_by(home_team) %>%
+  summarise(
+    close_game_over = mean(result == "Over" & spread_category == "Close", na.rm = TRUE),
+    not_close_game_over = mean(result == "Over" & spread_category == "Not Close", na.rm = TRUE),
+    .groups = "drop"
+  )
+print(team_performance)
+```
+
+This code attempts to breakdown whether players were more likely to exceed yardage expectations when the game had a close spread. It can be seen here that the Chicago Bears players for example exceeded expectations 100% of the time when the spread was close, but 0% of the time when the spread was not close. 
+
+
+```{r}
+team_performance_outcome <- game_table_cleaned %>%
+  group_by(Favorite) %>%
+  summarise(
+    win_rate = mean(Result == "W"),
+    avg_spread = mean(Spread, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  inner_join(team_performance, by = c("Favorite" = "home_team"))
+
+print(team_performance_outcome)
+```
+
+```{r}
+merged_data <- merged_data %>%
+  left_join(
+    game_table_cleaned %>%
+      select(Favorite, Underdog, Spread),
+    by = c("home_team" = "Favorite", "away_team" = "Underdog")
+  )
+
+merged_data <- merged_data %>%
+  bind_rows(
+    merged_data %>%
+      left_join(
+        game_table_cleaned %>%
+          select(Favorite, Underdog, Spread),
+        by = c("home_team" = "Underdog", "away_team" = "Favorite")
+      )
+  )
+```
+
+```{r}
+player_performance_by_spread <- merged_data %>%
+  mutate(
+    spread_range = case_when(
+      abs(Spread) <= 1 ~ "Very Close",
+      abs(Spread) <= 3 ~ "Close",
+      TRUE ~ "Not Close"
+    )
+  ) %>%
+  group_by(spread_range) %>%
+  summarise(
+    avg_over_percentage = mean(result == "Over", na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Plot the results
+ggplot(player_performance_by_spread, aes(x = spread_range, y = avg_over_percentage, fill = spread_range)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Player Performance by Spread Range",
+    x = "Spread Range",
+    y = "Average Over Percentage"
+  ) +
+  theme_minimal()
+```
+
+This code creates a visualization that displays the percentage of players that go over their expected yardage when the spread is considered close, not close, or very close.
+
+
+In this analysis, the primary goal was to uncover insights into the relationship between betting odds, game outcomes, and individual player performance. Initial expectations included finding a strong correlation between the spread, game location, and outcomes, as well as identifying patterns in wide receiver performance relative to betting projections. However, the results revealed unexpected trends, such as away favorites performing better than anticipated and players exceeding expectations in games with closer spreads. These findings suggest that while bookmakers often favor the home team, reflected in higher spreads for home favorites, the actual dynamics of game outcomes and player performance are more nuanced.
+There are limitations to the analysis that should be noted. The sample size, particularly for player prop bets, restricts the generalizability of these findings. The API that my data was pulled from was a paid service that limited the number of requests, which hindered my ability to gather more data. Some statistical results, while interesting, did not achieve statistical significance and should be interpreted lightly. Additionally, relying on historical data may not fully capture the changes in team or player performance over time. These limitations showcase opportunities for further exploration and refinement of the approach.
+Future expansions could include analyzing additional sports or seasons to improve the clarity of the findings and to find broader trends. Incorporating live odds or in-play data may offer real-time insights into betting market behavior, while using machine learning models could help identify hidden patterns and improve predictive capabilities. Despite these limitations, the analysis provides valuable insights, such as the unreliability of betting odds as indicators of game outcomes or player performance and the tendency for players to exceed expectations in games with close spreads. This study shows the potential to deepen understanding of the connection between spreads, outcomes, and player projections, offering useful perspectives for both betters and analysts.
+
+
+
+
